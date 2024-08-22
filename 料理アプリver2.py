@@ -18,6 +18,9 @@ dish_type = st.selectbox(
     ["前菜", "主菜", "副菜", "サラダ", "汁物", "デザート", "その他"]
 )
 
+import os
+rakuten_api_key = os.getenv("RAKUTEN_API_KEY")
+
 # APIリクエストを送信する関数
 def get_recipes(cuisine_type, dish_type):
     # カテゴリに応じたAPIのカテゴリIDなどを設定（仮のIDを使用）
@@ -31,15 +34,57 @@ def get_recipes(cuisine_type, dish_type):
     }[cuisine_type]
 
     url = 'https://app.rakuten.co.jp/services/api/Recipe/CategoryRanking/20170426'
-    APP_ID = "1022055563333314426"
     params = {
         'format': 'json',
-        'applicationId': APP_ID,
+        'applicationId': rakuten_api_key,
         'categoryId': category_id
     }
     response = requests.get(url, params=params)
     return response.json()
 
+from bs4 import BeautifulSoup
+from openai import OpenAI
+
+import os 
+api_key = os.getenv("OPENAI_API_KEY")
+
+# OpenAIクライアントの初期化
+client = OpenAI(api_key=api_key)
+
+def get_page_content(url):
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.text
+    else:
+        return None
+
+def extract_recipe_info(html_content):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    # 'recipe_material' クラスを持つ要素を探す
+    ingredients_section = soup.find(class_='recipe_material__list')
+    if ingredients_section:
+        # 各材料をリストとして抽出
+        ingredients = [item.get_text(strip=True) for item in ingredients_section.find_all('li')]
+        return ingredients
+    else:
+        return None
+
+def estimate_calories(ingredients):
+    prompt = f"以下の材料からカロリーを推定してください:\n\n{', '.join(ingredients)}"
+    
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "あなたは栄養士です。"},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    
+    # 修正部分: messageオブジェクトに直接アクセスする
+    estimated_calories = response.choices[0].message.content
+    return estimated_calories
+
+# コード1: レシピ提案ボタンの処理
 if st.button("レシピを提案する"):
     data = get_recipes(cuisine_type, dish_type)
     
@@ -52,5 +97,20 @@ if st.button("レシピを提案する"):
             st.subheader(recipe['recipeTitle'])
             st.image(recipe['foodImageUrl'])
             st.write(f"作る時間: {recipe['recipeIndication']}")
+            recipeUrl = recipe['recipeUrl']
+
+            # コード2: 取得したURLを使ってカロリー推定を実行
+            html_content = get_page_content(recipeUrl)
+            
+            if html_content:
+                ingredients = extract_recipe_info(html_content)
+                if ingredients:
+                    estimated_calories = estimate_calories(ingredients)
+                    st.write(f"推定カロリー: {estimated_calories}")
+                else:
+                    st.write("材料を抽出できませんでした。")
+            else:
+                st.write("ページの内容を取得できませんでした。")
     else:
         st.write("データが見つかりませんでした。")
+
